@@ -1,0 +1,254 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+Visualizations using C.D.'s NBA data.
+
+```{r}
+require(tidyverse)
+require(plotly)
+require(RColorBrewer)
+
+theme_set(theme_bw())
+#readRDS(file = "GE.Rdata")
+source("nbacoaches-3.R")
+
+```
+
+Start with some summary statistics type plots.  For example, how long has the current coach been with the team (current being 2020 season).  The columns will be color-coded by the coaches win percentage with the team.
+
+```{r}
+pDF <- coach_df %>% filter(season == 2020) %>% 
+  arrange(desc(seasons.w.franch)) %>%
+  mutate(coach = factor(coach, levels = coach)) %>%
+  mutate(win_pct = reg.franch.W/reg.franch.G * 100)
+ggplot(pDF, aes(coach, seasons.w.franch)) + geom_col(aes(fill = win_pct)) +
+  labs(x = "Coach", 
+       y = "Seasons with Franchise", 
+       title = "As of 2020",
+       fill = "Win %") +
+  theme(axis.text.x = element_text(angle = 90))
+```
+
+How about average coach tenure by year?  
+
+```{r}
+pDF <- coach_df %>% group_by(season) %>%
+  summarise(Mean_Tenure = mean(seasons.w.franch),
+            Mean_Playoff = sum(playoff.career.G, na.rm = TRUE) / n()) 
+ggplot(pDF, aes(season, Mean_Tenure)) + geom_col(aes(fill = Mean_Playoff)) +
+  labs(x = "Season", 
+       y = "Mean Tenure", 
+       title = "Coaching Tenure in the NBA",
+       fill = "Mean Number of\n Playoff Games") 
+```
+
+How about coaches winning percentages through time.  This won't be labelled by coach, but rather a series of lines extending across seasons with each season's WP record.  With all the coaches, it should be a cloud.
+
+```{r}
+pDF <- coach_df %>% group_by(coach, season) %>% 
+  summarize(WP = reg.current.W / reg.current.G * 100)
+ggplot(pDF, aes(season, WP, group = coach)) + geom_path() +
+  labs(x = "Season", y = "Win Pct w/Coach")
+```
+One last coach plot: winning percentage when fired mid-season.
+
+```{r}
+pDF <- coach_df %>% filter(replaced == "midseason") %>% 
+  mutate(WP = round(reg.current.W / reg.current.G * 100, 2)) %>%
+  mutate("Seasons with Franchise" = `seasons.w.franch`)
+         
+ggplot(pDF, aes(season, WP)) + 
+  geom_point(aes(size = reg.current.G, color = seasons.w.franch)) +
+  scale_color_distiller(palette = "Spectral", direction = -1) +
+  labs(x = "Season", y = "Win Pct When Fired", 
+       title = "Midseason Firings",
+       size = "Games\nCoached",
+       color = "Seasons with\nFranchise")
+```
+
+Let's recreate the previous plot using plotly
+
+```{r}
+fig <- plot_ly(data = pDF) %>%
+  add_markers(mode = "markers",
+              type = "scatter",
+              x = ~season,
+              y = ~WP,
+              color = ~`Seasons with Franchise`,
+              colors = rev(brewer.pal(n = 11,
+                                      name = "Spectral")),
+              size = ~reg.current.G,
+              text = ~paste("Coach: ", coach, 
+                            '<br>Team:', team,
+                            '<br>Games:', reg.current.G,
+                            '<br>Seasons:', `Seasons with Franchise`,
+                            '<br>Win %:', WP)) %>%
+  layout(
+    title = "Midseason Firings",
+    xaxis = list(title = "Season"),
+    yaxis = list(title = "Winning Pct When Fired"),
+    showlegend = FALSE
+  ) %>% colorbar(title = list(text = "Seasons with\nFranchise"))
+
+fig 
+```
+
+Compare WP pre and post midseason firings by year.
+
+```{r}
+pDF1 <- coach_df %>% filter(replaced == "midseason") %>%
+  group_by(season) %>%
+  summarize(Before = sum(reg.current.W) / sum(reg.current.G) * 100, season = season) %>%
+  distinct()
+pDF2 <- coach_df %>% filter(hired == "midseason") %>%
+  group_by(season) %>%
+  summarize(After = sum(reg.current.W) / sum(reg.current.G) * 100, season = season) %>%
+  distinct()
+pDF <- full_join(pDF1, pDF2, by = "season") %>% 
+  gather(key = "Which", value = "WP", -season)
+
+ggplot(pDF, aes(season, WP, group = Which)) + geom_col(aes(fill = Which), position = "dodge")
+```
+
+```{r}
+pDF <- full_join(pDF1, pDF2, by = "season") %>% 
+  mutate(Change = After - Before)
+
+m1 <- lm(Change ~ season, pDF)
+
+pDF$fitted <- fitted(m1)
+midseason <- pDF
+
+#ggplot(pDF, aes(season, Change)) + geom_point() + geom_line(aes(y = fitted))
+
+ggplot(pDF, aes(season, Change)) + geom_point() + geom_smooth(aes(y = fitted), method = "lm")
+```
+
+Compare WP before and after an offseason firing.
+
+```{r}
+pDF1 <- coach_df %>% filter(replaced == "offseason" & season < 2020) %>%
+  group_by(season) %>%
+  summarize(Before = sum(reg.current.W) / sum(reg.current.G) * 100, season = season) %>%
+  distinct()
+pDF2 <- coach_df %>% filter(hired == "offseason") %>%
+  group_by(season) %>%
+  summarize(After = sum(reg.current.W) / sum(reg.current.G) * 100, season = season - 1) %>%
+  distinct()
+pDF <- full_join(pDF1, pDF2, by = "season") %>% 
+  mutate(Change = After - Before)
+
+m2 <- lm(Change ~ season, pDF)
+
+pDF$fitted <- fitted(m2)
+offseason <- pDF
+
+#ggplot(pDF, aes(season, Change)) + geom_point() + geom_line(aes(y = fitted))
+
+ggplot(pDF, aes(season, Change)) + geom_point() + geom_smooth(aes(y = fitted), method = "lm")
+```
+
+Is it better to fire coach mid-season or offseason?
+
+```{r}
+wpchange <- tibble(season = offseason$season, 
+                   offseason = offseason$Change, 
+                   midseason = midseason$Change[-19]) %>%
+  summarise(wpoff = mean(offseason), wpmid = mean(midseason))
+
+
+```
+
+Start looking at effect on lead WS player before/after offseason coaching change.
+
+```{r}
+# join player_df and coach_df by season and team
+
+full_df <- left_join(player_df, coach_df, by = c("Season" = "season", "Team" = "team"))
+```
+
+```{r}
+# filter coach_df by replaced and hired == offseason
+coach_change <- full_df %>% filter(replaced == "offseason" | hired == "offseason")
+```
+
+Group by season and team and create a dataframe with just the top player
+
+```{r}
+top_player_pre <- coach_change %>% group_by(Season, Team) %>% slice_max(WS, n = 1) %>% mutate(TopWS = TRUE)
+```
+
+Now find cases where the player remained on the team in subsequent year and pull their stats.
+
+```{r}
+player_df_back <- player_df %>% mutate(Season = Season - 1)
+player_pre_post <- left_join(top_player_pre, player_df_back, by = c("Player", "Season", "Team")) %>% arrange(Player)
+```
+
+```{r}
+Player_change <- player_pre_post %>% ungroup() %>%
+                transmute(Season = Season,
+                          BPM = BPM.y - BPM.x,
+                          WS = WS.y - WS.x,
+                          VORP = VORP.y - VORP.x) 
+
+Yearly_change <- Player_change %>% group_by(Season) %>% 
+  summarize(BPM = mean(BPM, na.rm = TRUE), 
+            VORP = mean(VORP, na.rm = TRUE), 
+            WS = mean(WS, na.rm = TRUE))
+```
+
+```{r}
+ggplot(Player_change, aes(VORP)) + geom_histogram(bins = 12)
+```
+
+```{r}
+# Test if change in BPM is significant
+t.test(Player_change$BPM)
+t.test(Player_change$WS)
+t.test(Player_change$VORP)
+
+```
+
+```{r}
+ggplot(Yearly_change, aes(Season, BPM)) + geom_line() + geom_smooth(method = "lm")
+ggplot(Yearly_change, aes(Season, VORP)) + geom_line() + geom_smooth(method = "lm")
+ggplot(Yearly_change, aes(Season, WS)) + geom_line() + geom_smooth(method = "lm")
+
+```
+
+```{r}
+#creating dataframe of mideseason offseason and change
+season <- rbind(data.frame(season = "midseason", midseason),
+                data.frame(season = "offseason", offseason)) %>%
+  select(season, Change)
+  
+coach_change_model <- lm(Change ~ season, data = season)
+summary(coach_change_model)
+```
+
+```{r}
+midseason_coach_changes <- coach_df %>%
+  filter(replaced == "midseason" | hired =="midseason")
+
+```
+```{r}
+offseason_coach_changes <- coach_df %>%
+  filter(replaced == "offseason" | hired =="offseason") %>% 
+  mutate(transition = case_when(!is.na(hired) & !is.na(replaced) ~ "in_and_out",
+                                !is.na(hired) & is.na(replaced) ~ "incoming",
+                                is.na(hired) & !is.na(replaced) ~ "outgoing"),
+         trans_year = case_when())
+
+offseason_coach_changes %>%
+  group_by(transition) %>%
+  summarise(reg.current.wp = sum(reg.current.W)/sum(reg.current.G))
+
+save(offseason_coach_changes, file = "off_season_coach_changes.RData")
+load("off_season_coach_changes.RData")
+  
+```
+
+

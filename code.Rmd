@@ -3,8 +3,6 @@ title: "R Notebook"
 output: html_notebook
 ---
 
-Visualizations using C.D.'s NBA data.
-
 ```{r}
 require(tidyverse)
 require(plotly)
@@ -22,7 +20,8 @@ Start with some summary statistics type plots.  For example, how long has the cu
 pDF <- coach_df %>% filter(season == 2020) %>% 
   arrange(desc(seasons.w.franch)) %>%
   mutate(coach = factor(coach, levels = coach)) %>%
-  mutate(win_pct = reg.franch.W/reg.franch.G * 100)
+  #regular season franchise wins divided by regular season franchise games coached multiplying by 100
+  mutate(win_pct = reg.franch.W/reg.franch.G * 100) 
 ggplot(pDF, aes(coach, seasons.w.franch)) + geom_col(aes(fill = win_pct)) +
   labs(x = "Coach", 
        y = "Seasons with Franchise", 
